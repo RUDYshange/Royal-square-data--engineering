@@ -1,0 +1,183 @@
+# Single-stack data platform: OLTP -> CDC -> lake -> batch/stream -> serving API
+# Everything here runs locally. No cloud bill until you choose to move it.
+
+services:
+
+  # ---------- Week 3: OLTP source + analytics warehouse (same engine, two DBs) ----------
+  postgres:
+    image: postgres:16
+    container_name: rs-postgres
+    command:
+      - "postgres"
+      - "-c" 
+      - "wal_level=logical"        # required for Debezium logical replication
+      - "-c"
+      - "max_replication_slots=4"
+      - "-c"
+      - "max_wal_senders=4"
+    environment:
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: royalsquare
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Week 2: object storage / data lake (S3-compatible) ----------
+  minio:
+    image: minio/minio:latest
+    container_name: rs-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_USER} ${MINIO_PASSWORD};
+      mc mb -p local/bronze local/silver local/gold;
+      echo 'lake buckets ready';
+      "
+
+  # ---------- Week 5: stream transport (Kafka API) ----------
+  redpanda:
+    image: redpandadata/redpanda:latest
+    container_name: rs-redpanda
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports: ["9092:9092", "9644:9644"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  console:
+    image: redpandadata/console:latest
+    container_name: rs-console
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+    ports: ["8085:8080"]
+    depends_on:
+      redpanda: { condition: service_healthy }
+
+  # ---------- Week 7: Change Data Capture ----------
+  connect:
+    image: debezium/connect:2.7
+    container_name: rs-connect
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:29092
+      GROUP_ID: rs-connect
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_status
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    ports: ["8083:8083"]
+    depends_on:
+      redpanda: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+  # ---------- Week 5: distributed batch processing ----------
+  spark-master:
+    image: bitnami/spark:3.5
+    container_name: rs-spark-master
+    environment:
+      SPARK_MODE: master
+    ports: ["7077:7077", "8080:8080"]
+    volumes:
+      - ./spark/jobs:/opt/jobs
+
+  spark-worker:
+    image: bitnami/spark:3.5
+    container_name: rs-spark-worker
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: 2
+    depends_on: [spark-master]
+    volumes:
+      - ./spark/jobs:/opt/jobs
+
+  # ---------- Week 5: orchestration ----------
+  airflow:
+    build: ./airflow
+    container_name: rs-airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${PG_USER}:${PG_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      PG_USER: ${PG_USER}
+      PG_PASSWORD: ${PG_PASSWORD}
+      MINIO_USER: ${MINIO_USER}
+      MINIO_PASSWORD: ${MINIO_PASSWORD}
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
+    ports: ["8081:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./spark/jobs:/opt/jobs
+      - ./dbt:/opt/dbt
+    command: standalone
+
+  # ---------- Week 7: high-velocity serving store ----------
+  redis:
+    image: redis:7-alpine
+    container_name: rs-redis
+    ports: ["6379:6379"]
+
+  # stream consumer: CDC topics -> Redis (sub-second reads)
+  stream-consumer:
+    build: ./stream
+    container_name: rs-stream-consumer
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:29092
+      REDIS_HOST: redis
+    depends_on:
+      redpanda: { condition: service_healthy }
+    restart: unless-stopped
+
+  # ---------- Week 7: serving layer ----------
+  api:
+    build: ./api
+    container_name: rs-api
+    environment:
+      REDIS_HOST: redis
+      PG_DSN: postgresql://${PG_USER}:${PG_PASSWORD}@postgres:5432/royalsquare
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  miniodata:

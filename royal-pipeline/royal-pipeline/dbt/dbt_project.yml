@@ -1,0 +1,17 @@
+name: royal_square
+version: "1.0.0"
+config-version: 2
+profile: royal_square
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  royal_square:
+    staging:
+      +materialized: view
+      +schema: analytics
+    marts:
+      +materialized: table
+      +schema: analytics

@@ -1,0 +1,12 @@
+royal_square:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: postgres
+      port: 5432
+      user: "{{ env_var('PG_USER', 'rs') }}"
+      password: "{{ env_var('PG_PASSWORD', 'rs_local_dev_only') }}"
+      dbname: royalsquare
+      schema: analytics
+      threads: 4

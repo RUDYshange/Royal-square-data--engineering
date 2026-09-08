@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: stg_client_value
+    description: Staging view over the Spark gold mart.
+    columns:
+      - name: client_id
+        description: Source system primary key.
+        tests: [unique, not_null]
+      - name: province
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Gauteng','Western Cape','KwaZulu-Natal','Free State',
+                       'Limpopo','Mpumalanga','North West','Eastern Cape',
+                       'Northern Cape']
+      - name: risk_profile
+        tests:
+          - accepted_values:
+              values: ['low','moderate','high']
+      - name: lifetime_premium
+        description: Cannot be negative; a negative here means the join fanned out.
+        tests:
+          - not_null
+
+  - name: dim_client_segment
+    description: Client-level value and profitability segmentation.
+    columns:
+      - name: client_id
+        tests: [unique, not_null]
+      - name: value_tier
+        tests:
+          - accepted_values:
+              values: ['platinum','gold','silver','bronze']
+      - name: profitability_band
+        tests:
+          - accepted_values:
+              values: ['no_history','loss_making','marginal','profitable']
+
+  - name: fct_province_performance
+    description: Provincial roll-up used by the analytics API.
+    columns:
+      - name: province
+        tests: [unique, not_null]
+      - name: client_count
+        tests: [not_null]
