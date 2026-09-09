@@ -28,6 +28,17 @@ blame Spark for it.
 
 ## Option B — PowerShell only
 
+Run these commands from the repository directory that contains
+`docker-compose.yml`:
+
+```powershell
+cd path\to\royal-pipeline
+docker version
+docker compose version
+```
+
+Docker Desktop must be running before these checks succeed.
+
 Use the included PowerShell equivalents:
 
 ```powershell
@@ -53,10 +64,10 @@ you type commands.
 ## Memory: the thing that will actually bite you
 
 This stack runs Spark master, a Spark worker, Airflow, Postgres, Redpanda,
-Kafka Connect, MinIO, Redis, and two Python services. That is roughly **10–12 GB
-of RAM**. Docker Desktop on Windows defaults to about half your system memory,
-and when it runs out, containers are killed silently — you get a dead Spark
-worker and no obvious error.
+Kafka Connect, MinIO, Redis, and two Python services. Allow Docker Desktop at
+least **12 GB of memory**; 16 GB is preferable. When Docker runs out of memory,
+containers may be killed silently and the Spark worker is often the first thing
+to fail.
 
 Create `C:\Users\<you>\.wslconfig`:
 
@@ -69,11 +80,10 @@ swap=4GB
 
 Then `wsl --shutdown` in PowerShell and restart Docker Desktop.
 
-**If you have 16 GB or less**, run the stack in halves instead. Comment out
-`spark-master`, `spark-worker` and `airflow` while working on the streaming
-side; comment out `connect`, `stream-consumer` and `console` while working on
-batch. You lose nothing conceptually — you are studying one path at a time
-anyway, which is how the schedule is structured.
+**If you have 16 GB or less**, run only the part of the stack you are studying
+at a time. Do not comment services out of `docker-compose.yml`, because that
+can break dependency relationships. Stop unused services with Docker Desktop
+or use `docker compose stop service-name`.
 
 Check what you have:
 
@@ -91,13 +101,14 @@ Already handled by `.gitattributes`, but if you cloned before adding it and see:
 /usr/bin/env: 'bash\r': No such file or directory
 ```
 
-that is CRLF inside a Linux container. Fix it:
+that is CRLF inside a Linux container. First make sure local work is committed
+or backed up, then reclone the repository after setting:
 
 ```powershell
 git config --global core.autocrlf input
-git rm --cached -r .
-git reset --hard
 ```
+
+Avoid `git reset --hard` here because it can discard local changes.
 
 ---
 
@@ -106,7 +117,7 @@ git reset --hard
 Windows tends to occupy some of these already. Check before starting:
 
 ```powershell
-netstat -ano | Select-String ":5432|:8080|:8081|:9000|:9092|:8000"
+netstat -ano | Select-String ":5432|:6379|:8080|:8081|:8083|:8000|:8085|:9000|:9092|:9644"
 ```
 
 Common collisions: **5432** if you have Postgres installed natively, **8080**
@@ -135,6 +146,16 @@ Invoke-RestMethod http://localhost:8000/analytics/loss-ratio | ConvertTo-Json -D
 
 **Docker Desktop must be running** before any command. Obvious until you spend
 twenty minutes debugging "cannot connect to the Docker daemon".
+
+Useful diagnostics when a service does not start:
+
+```powershell
+docker compose ps
+docker compose logs --tail=100
+```
+
+The `reset` task removes Docker volumes and deletes the local database and lake
+data. Use it only when you intentionally want a clean stack.
 
 **File watching.** If you edit DAGs from Windows while the repo sits in WSL,
 Airflow may not notice changes promptly. Editing from inside WSL — VS Code with
