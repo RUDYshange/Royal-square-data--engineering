@@ -87,7 +87,7 @@ services:
 
   # ---------- Week 7: Change Data Capture ----------
   connect:
-    image: debezium/connect:2.7
+    image: debezium/connect:2.7.3.Final
     container_name: rs-connect
     environment:
       BOOTSTRAP_SERVERS: redpanda:29092
