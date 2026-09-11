@@ -1,5 +1,11 @@
 # Verifies every layer of the stack. Run after .\make.ps1 up
 $pass = 0; $fail = 0
+$envPath = Join-Path $PSScriptRoot '..\.env'
+$pgUser = 'rs'
+if (Test-Path $envPath) {
+    $userLine = Get-Content $envPath | Where-Object { $_ -match '^PG_USER=' } | Select-Object -First 1
+    if ($userLine) { $pgUser = ($userLine -split '=', 2)[1].Trim() }
+}
 
 function Check {
     param([string]$Name, [scriptblock]$Test)
@@ -21,7 +27,7 @@ function Test-Url { param([string]$Url)
 }
 
 Write-Host '--- infrastructure ---'
-Check 'postgres accepting connections' { docker exec rs-postgres pg_isready -U rs 2>&1 | Out-Null; $LASTEXITCODE -eq 0 }
+Check 'postgres accepting connections' { docker exec rs-postgres pg_isready -U $pgUser 2>&1 | Out-Null; $LASTEXITCODE -eq 0 }
 Check 'redpanda cluster healthy'       { docker exec rs-redpanda rpk cluster health 2>&1 | Out-Null; $LASTEXITCODE -eq 0 }
 Check 'minio reachable'                { Test-Url 'http://localhost:9000/minio/health/live' }
 Check 'kafka connect up'               { Test-Url 'http://localhost:8083/' }
@@ -31,7 +37,7 @@ Check 'api healthy'                    { Test-Url 'http://localhost:8000/health'
 
 Write-Host '--- data flow ---'
 Check 'seed data loaded' {
-    $n = docker exec rs-postgres psql -U rs -d royalsquare -tAc 'SELECT count(*) FROM ops.policies'
+    $n = docker exec rs-postgres psql -U $pgUser -d royalsquare -tAc 'SELECT count(*) FROM ops.policies'
     [int]$n -gt 0
 }
 Check 'cdc connector running' {
