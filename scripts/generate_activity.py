@@ -7,12 +7,15 @@ a second terminal during your demo — the reviewers should watch numbers move.
 from __future__ import annotations
 
 import argparse
+import os
 import random
 import time
 
 import psycopg
 
-DSN = "postgresql://rs:rs_local_dev_only@localhost:5432/royalsquare"
+# Inside the compose network use the service name; from a host with a
+# published 5432, override via PG_DSN.
+DSN = os.getenv("PG_DSN", "postgresql://rs:rs_local_dev_only@localhost:5432/royalsquare")
 STAGES = ["lodged", "assessing", "approved", "rejected", "paid"]
 
 

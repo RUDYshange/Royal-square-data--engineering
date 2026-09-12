@@ -18,6 +18,13 @@ import psycopg
 import redis
 from fastapi import FastAPI, HTTPException, Query
 from psycopg.rows import dict_row
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+from users import router as users_router
+from auth import router as auth_router
+from clients import router as clients_router
 
 app = FastAPI(
     title="Royal Square Data Platform API",
@@ -90,11 +97,28 @@ def open_claims(limit: int = Query(20, ge=1, le=200)):
     }
 
 
+# ----------------------------- operator accounts (CRUD) -----------------------------
+
+app.include_router(users_router)
+app.include_router(auth_router)
+app.include_router(clients_router)
+
+
 # ----------------------------- batch analytics -----------------------------
 
 @app.get("/analytics/clients/{client_id}")
 def client_value(client_id: int):
     with db() as conn:
+        exists = conn.execute(
+            "SELECT to_regclass('analytics.client_value') IS NOT NULL AS ok"
+        ).fetchone()
+        if not exists["ok"]:
+            # A missing mart is an expected state (batch has not run yet),
+            # not a server fault — tell the client exactly that.
+            raise HTTPException(
+                503,
+                "daily mart not built yet — run: make batch",
+            )
         row = conn.execute(
             "SELECT * FROM analytics.client_value WHERE client_id = %s", (client_id,)
         ).fetchone()
@@ -107,6 +131,14 @@ def client_value(client_id: int):
 def loss_ratio_by_province(min_policies: int = Query(1, ge=1)):
     """The mart's headline question: which provinces are we losing money in?"""
     with db() as conn:
+        exists = conn.execute(
+            "SELECT to_regclass('analytics.client_value') IS NOT NULL AS ok"
+        ).fetchone()
+        if not exists["ok"]:
+            raise HTTPException(
+                503,
+                "daily mart not built yet — run: make batch",
+            )
         rows = conn.execute(
             """
             SELECT province,
@@ -132,11 +164,43 @@ def loss_ratio_by_province(min_policies: int = Query(1, ge=1)):
 def freshness():
     """Reviewers will ask how you know the pipeline ran. This is the answer."""
     with db() as conn:
-        row = conn.execute(
-            "SELECT MAX(run_date) AS last_run, COUNT(*) AS rows FROM analytics.client_value"
+        exists = conn.execute(
+            "SELECT to_regclass('analytics.client_value') IS NOT NULL AS ok"
         ).fetchone()
+        batch = (
+            conn.execute(
+                "SELECT MAX(run_date) AS last_run, COUNT(*) AS rows FROM analytics.client_value"
+            ).fetchone()
+            if exists["ok"]
+            else None
+        )
+    if batch is None:
+        raise HTTPException(
+            503,
+            "daily mart not built yet — run: make batch",
+        )
     return {
-        "batch": row,
+        "batch": batch,
         "stream_last_event_ts": _redis.get("claims:last_event_ts"),
         "served_at": _now(),
     }
+# Mounted at /app/web/dist by docker-compose. The guard keeps the API
+# working for anyone who clones this without building the frontend.
+#
+# The SPA has client-side routes (/login). StaticFiles(html=True) only
+# resolves exact files, so deep links would 404. This fallback rewrites
+# any non-API GET to index.html after the real routes have had their
+# chance — same reason the mount itself must stay last.
+@app.get("/{full_path:path}", include_in_schema=False)
+def spa_fallback(full_path: str):
+    candidate = WEB_DIST / full_path
+    if WEB_DIST.is_dir() and full_path and candidate.is_file():
+        return FileResponse(candidate)
+    if WEB_DIST.is_dir():
+        return FileResponse(WEB_DIST / "index.html")
+    raise HTTPException(404, "frontend not built — run: cd web && npm run build")
+
+
+WEB_DIST = Path(__file__).parent / "web" / "dist"
+if WEB_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="ui")

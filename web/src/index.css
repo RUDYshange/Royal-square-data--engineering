@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { font-family: 'Inter', system-ui, sans-serif; }
+  body { @apply bg-canvas text-ink text-body-md antialiased; }
+
+  /* Material Symbols default settings; FILL toggles via .msr-fill */
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    line-height: 1;
+    display: inline-block;
+  }
+  .msr-fill, .msr-fill .material-symbols-outlined {
+    font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  }
+
+  /* Tabular numerals across all metric/telemetry text — no row jitter. */
+  .tabular, .tabular-nums { font-feature-settings: "tnum" 1, "cv02" 1; }
+
+  :focus-visible { @apply outline-none ring-2 ring-live ring-offset-0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}

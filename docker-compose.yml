@@ -108,8 +108,11 @@ services:
   spark-master:
     image: apache/spark:3.5.4
     container_name: rs-spark-master
+    # apache/spark's entrypoint takes the role as CMD (SPARK_MODE is Bitnami-only):
+    # run start-master in the foreground so the container keeps living.
+    command: ["/opt/spark/sbin/start-master.sh"]
     environment:
-      SPARK_MODE: master
+      SPARK_NO_DAEMONIZE: 1
     ports: ["7077:7077", "8080:8080"]
     volumes:
       - ./spark/jobs:/opt/jobs
@@ -117,9 +120,9 @@ services:
   spark-worker:
     image: apache/spark:3.5.4
     container_name: rs-spark-worker
+    command: ["/opt/spark/sbin/start-worker.sh", "spark://spark-master:7077"]
     environment:
-      SPARK_MODE: worker
-      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_NO_DAEMONIZE: 1
       SPARK_WORKER_MEMORY: 2G
       SPARK_WORKER_CORES: 2
     depends_on: [spark-master]
